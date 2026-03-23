@@ -1,11 +1,17 @@
 from DWX_ZeroMQ_Connector_v2_0_1_RC8 import DWX_ZeroMQ_Connector  # 确保此文件在同一目录
 import pandas as pd
 import time
+from datetime import datetime, timedelta
 
 class larry_williams(object):
-    def __init__(self,zmq): 
-        _zmq._DWX_MTX_SEND_TRACKRATES_REQUEST_(self._instruments)
-        
+    def __init__(self,zmq,instruments): 
+        yesterday = datetime.now() - timedelta(days=1)
+        start_dt = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
+        now = datetime.now()
+        end_dt = now.replace(second=0, microsecond=0)
+        for symbol, display_name, multiplier in instruments:
+            zmq._DWX_MTX_SEND_HIST_REQUEST_(symbol,1440,_start=start_dt,_end=end_dt)
+    
     def calculate_atr(df, period=14):
         """计算真实波幅 ATR"""
         df = df.copy()

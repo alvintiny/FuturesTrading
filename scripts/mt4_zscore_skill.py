@@ -1,10 +1,12 @@
 import pandas as pd
 import pandas_ta as ta
 from threading import Thread, Lock
-from DWX_ZeroMQ_Connector_v2_0_1_RC8 import DWX_ZeroMQ_Connector  # 确保此文件在同一目录
 import json
 import time
 from time import sleep  # 补充缺失的sleep导入
+
+from DWX_ZeroMQ_Connector_v2_0_1_RC8 import DWX_ZeroMQ_Connector  # 确保此文件在同一目录
+from larry_williams import larry_williams  # 确保此文件在同一目录
 
 class mt4_zscore_skill(object):
     # 修复1：统一缩进（原代码类内方法缩进混乱）
@@ -58,6 +60,8 @@ class mt4_zscore_skill(object):
 
 if __name__ == "__main__":
     example = mt4_zscore_skill()
+    williams=larry_williams(example._zmq,example._instruments)
+
     # 修复9：调用修改后的单下划线方法（解决AttributeError核心问题）
     # example._subscribe_to_rate_feeds()
     
