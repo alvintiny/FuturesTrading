@@ -15,6 +15,8 @@ class mt4_zscore_skill(object):
         # 修复2：定义所有缺失的变量（symbol/_delay/_instruments/计数器/_zmq）
         self._delay = 0.01  # 极低延迟（提速关键，可按需微调）
         self._instruments = [('XAUUSD', 'XAUUSD', 1)]  # 初始化品种列表
+
+        self._current_date = datetime.now().date()
         
         # 修复3：将dwx改为实例变量self._zmq（原局部变量后续调用会丢失）
         self._zmq = DWX_ZeroMQ_Connector(_subdata_handlers=[self],_verbose=False,_sleep_delay=1)
@@ -29,7 +31,15 @@ class mt4_zscore_skill(object):
         # split msg to get topic and message
         print(data)
         _topic, _msg = data.split(":|:")
+        if(self._current_date!=datetime.now().date()){
+            self._current_date = datetime.now().date()
+            self._larry_williams()
+        }
+
         # print('Data on Topic={} with Message={}'.format(_topic, _msg))
+
+    def _larry_williams(self): 
+        _williams=larry_williams(self._zmq,self._instruments)
             
 
     # 修复5：将双下划线__subscribe_to_rate_feeds改为单下划线（双下划线是强私有，外部调用报错）
@@ -60,8 +70,7 @@ class mt4_zscore_skill(object):
 
 if __name__ == "__main__":
     example = mt4_zscore_skill()
-    williams=larry_williams(example._zmq,example._instruments)
-
+    example._larry_williams()
     # 修复9：调用修改后的单下划线方法（解决AttributeError核心问题）
     # example._subscribe_to_rate_feeds()
     
