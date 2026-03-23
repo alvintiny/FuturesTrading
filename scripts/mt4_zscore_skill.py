@@ -4,6 +4,7 @@ from threading import Thread, Lock
 import json
 import time
 from time import sleep  # 补充缺失的sleep导入
+from datetime import datetime, timedelta
 
 from DWX_ZeroMQ_Connector_v2_0_1_RC8 import DWX_ZeroMQ_Connector  # 确保此文件在同一目录
 from larry_williams import larry_williams  # 确保此文件在同一目录
@@ -15,9 +16,7 @@ class mt4_zscore_skill(object):
         # 修复2：定义所有缺失的变量（symbol/_delay/_instruments/计数器/_zmq）
         self._delay = 0.01  # 极低延迟（提速关键，可按需微调）
         self._instruments = [('XAUUSD', 'XAUUSD', 1)]  # 初始化品种列表
-
         self._current_date = datetime.now().date()
-        
         # 修复3：将dwx改为实例变量self._zmq（原局部变量后续调用会丢失）
         self._zmq = DWX_ZeroMQ_Connector(_subdata_handlers=[self],_verbose=False,_sleep_delay=1)
         self._zmq._Market_Data_DB.clear()
@@ -31,10 +30,10 @@ class mt4_zscore_skill(object):
         # split msg to get topic and message
         print(data)
         _topic, _msg = data.split(":|:")
-        if(self._current_date!=datetime.now().date()){
+        if self._current_date != datetime.now().date():
             self._current_date = datetime.now().date()
             self._larry_williams()
-        }
+        
 
         # print('Data on Topic={} with Message={}'.format(_topic, _msg))
 

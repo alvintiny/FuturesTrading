@@ -1,66 +1,83 @@
-from DWX_ZeroMQ_Connector_v2_0_1_RC8 import DWX_ZeroMQ_Connector  # 确保此文件在同一目录
+from DWX_ZeroMQ_Connector_v2_0_1_RC8 import DWX_ZeroMQ_Connector
 import pandas as pd
-import time
+import time 
+from time import sleep
 from datetime import datetime, timedelta
+import pandas_market_calendars as mcal
+from dateutil.relativedelta import relativedelta
+import pytz
+
+# 适配pandas-market-calendars的合法交易所名称
+EXCHANGE_CALENDARS = {
+    "CME": "CME_TradeDate",          # CME通用交易日历（兼容性最好）
+    "EUREX": "EUREX",
+    "ICE": "ICE",
+    "NYMEX": "CMEGlobex_Energy",
+    "CBOT": "CMEGlobex_Grains"
+}
+
+# 交易所时区映射（避免从日历获取时区出错）
+EXCHANGE_TIMEZONES = {
+    "CME": "America/Chicago",
+    "EUREX": "Europe/Berlin",
+    "ICE": "Europe/London",
+    "NYMEX": "America/Chicago",
+    "CBOT": "America/Chicago"
+}
 
 class larry_williams(object):
-    def __init__(self,zmq,instruments): 
-        yesterday = datetime.now() - timedelta(days=1)
-        start_dt = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
-        now = datetime.now()
-        end_dt = now.replace(second=0, microsecond=0)
-        for symbol, display_name, multiplier in instruments:
-            zmq._DWX_MTX_SEND_HIST_REQUEST_(symbol,1440,_start=start_dt,_end=end_dt)
+    def __init__(self, zmq, instruments): 
+        try:
+            prev_trading_day = self.get_prev_trading_day_for_forex_futures().strftime("%Y.%m.%d %H:%M:%S")
+            for symbol, display_name, multiplier in instruments:
+                zmq._History_DB.clear()
+                zmq._DWX_MTX_SEND_HIST_REQUEST_(_symbol=symbol,_timeframe=1440,_start=prev_trading_day, _end=prev_trading_day)
+                sleep(1)  
+                self.calculate_atr(zmq._History_DB[symbol+'_D1'][0])                                
+
+        except Exception as e:
+            print(f"初始化报错：{e}")
     
-    def calculate_atr(df, period=14):
+    def calculate_atr(self, df, period=1):
         """计算真实波幅 ATR"""
-        df = df.copy()
-        df['H-L'] = df['最高价'] - df['最低价']
-        df['H-PC'] = abs(df['最高价'] - df['收盘价'].shift(1))
-        df['L-PC'] = abs(df['最低价'] - df['收盘价'].shift(1))
+        df = pd.DataFrame([df])
+        df['H-L'] = df['high'] - df['low']
+        df['H-PC'] = abs(df['high'] - df['close'])
+        df['L-PC'] = abs(df['low'] - df['close'])
         df['TR'] = df[['H-L', 'H-PC', 'L-PC']].max(axis=1)
         df['ATR'] = df['TR'].rolling(window=period).mean()
+        print(df)    
         return df['ATR'].iloc[-1]
 
-    def larry_williams_comex(data,symbol, k=0.6, atr_period=14):
+    def larry_williams_comex(self, data, symbol, k=0.6, atr_period=1):
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 正在获取 COMEX {symbol} 数据...")
         try:
-            # 1. 获取外盘历史日线数据 (计算昨日振幅和 ATR)
-            # 新浪外盘历史接口返回的列名通常为：日期、开盘价、最高价、最低价、收盘价等
             daily_df = data['yesterday']
             if daily_df.empty:
                 return "获取历史数据失败，请检查 COMEX 合约代码。"
             
-            current_atr = calculate_atr(daily_df, period=atr_period)
+            current_atr = self.calculate_atr(daily_df, period=atr_period)
         
-            # 获取昨日数据 (倒数第二条是完整的昨日数据)
             yesterday_data = daily_df.iloc[-2]
             yesterday_range = yesterday_data['最高价'] - yesterday_data['最低价']
         
-            # 2. 获取今日实时盘口数据
-            # 使用新浪全球商品实时行情接口
             spot_df = data['today']
             if spot_df.empty:
                 return f"无法获取 {symbol} 的实时盘口数据。"
             
-            today_open = float(spot_data['开盘价'].iloc[0])
-            current_price = float(spot_data['最新价'].iloc[0])
+            today_open = float(spot_df['开盘价'].iloc[0])
+            current_price = float(spot_df['最新价'].iloc[0])
         
-            # 3. 计算核心点位
             buy_line = today_open + (yesterday_range * k)
             sell_line = today_open - (yesterday_range * k) 
         
-            # 4. 风险控制参数 (计算具体点位)
             stop_loss_long = buy_line - (1.5 * current_atr)
             take_profit_long = buy_line + (2.0 * current_atr)
 
-            # 5. 计算单手合约的美元风险金额
-            # 1 手 COMEX 黄金为 100 盎司，若是白银 SI 通常为 5000 盎司
             lot_size = 100 if symbol == "XAUUSD" else 5000 
             risk_per_lot_long_usd = (buy_line - stop_loss_long) * lot_size
             profit_per_lot_long_usd = (take_profit_long - buy_line) * lot_size
 
-            # 6. 打印实时监控面板
             print("-" * 50)
             print(f"📊 【COMEX {symbol}】Larry Williams 监控面板")
             print(f"昨日振幅: {yesterday_range:.2f} | 当前 ATR: {current_atr:.2f}")
@@ -74,7 +91,6 @@ class larry_williams(object):
             print(f"🔴 做空突破线: {sell_line:.2f}")
             print("-" * 50)
 
-            # 7. 信号判定
             if current_price >= buy_line:
                 return f"🔥 【触发买入】当前价格 {current_price} 已向上突破做多线 {buy_line:.2f}！"
             elif current_price <= sell_line:
@@ -84,3 +100,76 @@ class larry_williams(object):
 
         except Exception as e:
             return f"运行出错: {e}"
+
+    def get_exchange_trading_dates(self, exchange: str = "CME", start_date: datetime = None, end_date: datetime = None):
+        """获取交易所有效交易日（纯日期，无时区，避免冲突）"""
+        # 1. 初始化日历（容错）
+        try:
+            cal_name = EXCHANGE_CALENDARS[exchange.upper()]
+            cal = mcal.get_calendar(cal_name)
+        except (KeyError, RuntimeError):
+            cal = mcal.get_calendar("CME_TradeDate")
+    
+        # 2. 设置默认时间范围（转为纯日期，剥离时区）
+        if start_date is None:
+            start_date = datetime.now(pytz.UTC).date() - relativedelta(days=30)
+        else:
+            start_date = start_date.date() if hasattr(start_date, 'date') else start_date
+        
+        if end_date is None:
+            end_date = datetime.now(pytz.UTC).date()
+        else:
+            end_date = end_date.date() if hasattr(end_date, 'date') else end_date
+    
+        # 3. 获取纯日期的有效交易日（关键：避免Timestamp时区问题）
+        valid_days = cal.valid_days(start_date=start_date, end_date=end_date)
+        # 转换为Python原生date对象（完全剥离时区）
+        trading_dates = [day.date() for day in valid_days]
+        return trading_dates
+
+    def get_prev_trading_day_for_forex_futures(self,
+        base_datetime: datetime = None,
+        exchange: str = "CME",
+        tz_local: str = "America/Chicago"
+    ) -> datetime:
+        """
+        获取前一个交易日（纯日期计算，最后再绑定时区）
+        核心：先算日期，再加时区，避免Timestamp本地化冲突
+        """
+        # 1. 处理基准时间（转为交易所时区的纯日期）
+        tz_local_obj = pytz.timezone(tz_local)
+        if base_datetime is None:
+            base_datetime = datetime.now(tz_local_obj)
+        else:
+            if base_datetime.tzinfo is None:
+                base_datetime = tz_local_obj.localize(base_datetime)
+        
+        # 转为交易所时区，提取纯日期
+        exchange_tz_obj = pytz.timezone(EXCHANGE_TIMEZONES[exchange.upper()])
+        base_exchange_dt = base_datetime.astimezone(exchange_tz_obj)
+        base_exchange_date = base_exchange_dt.date()
+        
+        # 2. 获取交易所有效交易日列表（纯date对象）
+        trading_dates = self.get_exchange_trading_dates(exchange)
+        if not trading_dates:
+            raise ValueError("未找到有效交易日（时间范围过小）")
+        
+        # 3. 找前一个交易日（纯日期比较，无时区）
+        prev_candidate_date = base_exchange_date - timedelta(days=1)
+        # 筛选小于等于候选日期的交易日
+        valid_dates_filtered = [d for d in trading_dates if d <= prev_candidate_date]
+        if not valid_dates_filtered:
+            raise ValueError("未找到有效交易日（时间范围过小）")
+        
+        # 取最新的有效交易日（纯date）
+        prev_trading_day_date = max(valid_dates_filtered)
+        
+        # 4. 最后绑定时区（避免Timestamp问题）
+        # 步骤1：转为naive datetime（0点）
+        prev_trading_day_naive = datetime.combine(prev_trading_day_date, datetime.min.time())
+        # 步骤2：绑定交易所时区
+        prev_trading_day_exchange = exchange_tz_obj.localize(prev_trading_day_naive, is_dst=None)
+        # 步骤3：转换回本地时区
+        prev_trading_day_local = prev_trading_day_exchange.astimezone(tz_local_obj)
+        
+        return prev_trading_day_local
