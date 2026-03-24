@@ -26,14 +26,15 @@ EXCHANGE_TIMEZONES = {
 }
 
 class larry_williams(object):
-    def __init__(self, zmq, instruments): 
+    def __init__(self, zmq, instruments):
+        self._current_atr=[]
         try:
             prev_trading_day = self.get_prev_trading_day_for_forex_futures().strftime("%Y.%m.%d %H:%M:%S")
             for symbol, display_name, multiplier in instruments:
                 zmq._History_DB.clear()
                 zmq._DWX_MTX_SEND_HIST_REQUEST_(_symbol=symbol,_timeframe=1440,_start=prev_trading_day, _end=prev_trading_day)
                 sleep(1)  
-                self.calculate_atr(zmq._History_DB[symbol+'_D1'][0])                                
+                self._current_atr[symbol]=self.calculate_atr(zmq._History_DB[symbol+'_D1'][0])                                
 
         except Exception as e:
             print(f"初始化报错：{e}")
@@ -49,14 +50,15 @@ class larry_williams(object):
         print(df)    
         return df['ATR'].iloc[-1]
 
-    def larry_williams_comex(self, data, symbol, k=0.6, atr_period=1):
+    def larry_williams_comex(self, data, k=0.6, atr_period=1):
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 正在获取 COMEX {symbol} 数据...")
+        print(data)
         try:
             daily_df = data['yesterday']
             if daily_df.empty:
                 return "获取历史数据失败，请检查 COMEX 合约代码。"
-            
-            current_atr = self.calculate_atr(daily_df, period=atr_period)
+            symbol = "XAUUSD"
+            current_atr = self._current_atr[symbol]
         
             yesterday_data = daily_df.iloc[-2]
             yesterday_range = yesterday_data['最高价'] - yesterday_data['最低价']
