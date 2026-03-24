@@ -27,15 +27,25 @@ EXCHANGE_TIMEZONES = {
 
 class larry_williams(object):
     def __init__(self, zmq, instruments):
-        self._current_atr=[]
+        self._current_atr={}
+        self._today_open={}
+        self._yesterday_range={}
         try:
             prev_trading_day = self.get_prev_trading_day_for_forex_futures().strftime("%Y.%m.%d %H:%M:%S")
+            today_time = datetime.now().date()
             for symbol, display_name, multiplier in instruments:
                 zmq._History_DB.clear()
-                zmq._DWX_MTX_SEND_HIST_REQUEST_(_symbol=symbol,_timeframe=1440,_start=prev_trading_day, _end=prev_trading_day)
-                sleep(1)  
-                self._current_atr[symbol]=self.calculate_atr(zmq._History_DB[symbol+'_D1'][0])                                
-
+                zmq._DWX_MTX_SEND_HIST_REQUEST_(_symbol=symbol,_timeframe=1440,_start=prev_trading_day)
+                sleep(1)
+                for histdata in zmq._History_DB[symbol+'_D1']:
+                    if datetime.strptime(histdata['time'], '%Y.%m.%d %H:%M').date() == today_time:
+                        self._today_open[symbol]=histdata['open']
+                    else:
+                        df=self.calculate_atr(histdata).iloc[-1]
+                        print(df)
+                        self._current_atr[symbol]=df['ATR']
+                        self._yesterday_range[symbol]=df['H-L']
+                                             
         except Exception as e:
             print(f"初始化报错：{e}")
     
@@ -46,30 +56,16 @@ class larry_williams(object):
         df['H-PC'] = abs(df['high'] - df['close'])
         df['L-PC'] = abs(df['low'] - df['close'])
         df['TR'] = df[['H-L', 'H-PC', 'L-PC']].max(axis=1)
-        df['ATR'] = df['TR'].rolling(window=period).mean()
-        print(df)    
-        return df['ATR'].iloc[-1]
+        df['ATR'] = float(df['TR'].rolling(window=period).mean().iloc[-1].round(2))
+        return df
 
-    def larry_williams_comex(self, data, k=0.6, atr_period=1):
-        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 正在获取 COMEX {symbol} 数据...")
-        print(data)
+    def larry_williams_comex(self,symbol, data, k=0.6, atr_period=1):
         try:
-            daily_df = data['yesterday']
-            if daily_df.empty:
-                return "获取历史数据失败，请检查 COMEX 合约代码。"
-            symbol = "XAUUSD"
             current_atr = self._current_atr[symbol]
-        
-            yesterday_data = daily_df.iloc[-2]
-            yesterday_range = yesterday_data['最高价'] - yesterday_data['最低价']
-        
-            spot_df = data['today']
-            if spot_df.empty:
-                return f"无法获取 {symbol} 的实时盘口数据。"
-            
-            today_open = float(spot_df['开盘价'].iloc[0])
-            current_price = float(spot_df['最新价'].iloc[0])
-        
+            today_open = self._today_open[symbol]
+            current_price = data['open']
+            yesterday_range = self._yesterday_range[symbol]
+
             buy_line = today_open + (yesterday_range * k)
             sell_line = today_open - (yesterday_range * k) 
         
@@ -82,8 +78,8 @@ class larry_williams(object):
 
             print("-" * 50)
             print(f"📊 【COMEX {symbol}】Larry Williams 监控面板")
-            print(f"昨日振幅: {yesterday_range:.2f} | 当前 ATR: {current_atr:.2f}")
-            print(f"今日开盘: {today_open:.2f} | 当前价格: {current_price:.2f}")
+            print(f"昨日振幅: {yesterday_range} | 当前 ATR: {current_atr}")
+            print(f"今日开盘: {today_open} | 当前价格: {current_price}")
             print("-" * 50)
             print(f"🟢 做多突破线: {buy_line:.2f}")
             print(f"   └─ 建议止损位: {stop_loss_long:.2f} (-1.5 ATR)")
@@ -101,7 +97,7 @@ class larry_williams(object):
                 return f"💤 盘整中，未突破。距离上方突破还有 {buy_line - current_price:.2f} 个点。"
 
         except Exception as e:
-            return f"运行出错: {e}"
+            return f"运行出错:"
 
     def get_exchange_trading_dates(self, exchange: str = "CME", start_date: datetime = None, end_date: datetime = None):
         """获取交易所有效交易日（纯日期，无时区，避免冲突）"""
